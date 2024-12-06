@@ -1,7 +1,7 @@
 import torch.nn as nn
 import torch
 from torchvision import models
-import torch.nn.functional as F  # 추가 필요
+import torch.nn.functional as F
 
 
 class CSRNet(nn.Module):
@@ -9,21 +9,23 @@ class CSRNet(nn.Module):
         super(CSRNet, self).__init__()
         self.seen = 0
 
-        # ResNet-50 모델을 로드하고 필요한 레이어를 수정합니다.
-        resnet = models.resnet50(pretrained=not load_weights)
+        # 기존 ResNet-50 사용 부분 제거
+        # resnet = models.resnet50(pretrained=not load_weights)
+        # modules = list(resnet.children())[:-2]
 
-        # avgpool과 fc 레이어를 제거하여 필요한 특징 추출 부분만 사용합니다.
-        modules = list(resnet.children())[:-2]
+        # dilation 적용 부분 삭제 (DenseNet에는 해당 레이어 구조가 다름)
+        # resnet.layer3.apply(self._nostride_dilate(2))
+        # resnet.layer4.apply(self._nostride_dilate(4))
 
-        # 레이어 3와 레이어 4에서 dilated convolution을 적용하여 공간 해상도를 유지합니다.
-        resnet.layer3.apply(self._nostride_dilate(2))
-        resnet.layer4.apply(self._nostride_dilate(4))
+        # DenseNet-121 사용
+        densenet = models.densenet121(pretrained=not load_weights)
+        # DenseNet의 feature 추출 파트만 사용
+        self.frontend = densenet.features
 
-        self.frontend = nn.Sequential(*modules)
-
-        # backend를 정의합니다.
+        # DenseNet-121의 마지막 feature 출력 채널 수는 1024
+        # 이에 맞춰 backend 첫 Conv 레이어의 입력 채널 수정 (기존 2048 -> 1024)
         self.backend = nn.Sequential(
-            nn.Conv2d(2048, 512, kernel_size=3, padding=2, dilation=2),
+            nn.Conv2d(1024, 512, kernel_size=3, padding=2, dilation=2),
             nn.ReLU(inplace=True),
             nn.Conv2d(512, 256, kernel_size=3, padding=2, dilation=2),
             nn.ReLU(inplace=True),
@@ -39,18 +41,17 @@ class CSRNet(nn.Module):
             self._initialize_weights()
 
     def forward(self, x):
-      x = self.frontend(x)
-      x = self.backend(x)
-      x = self.output_layer(x)
+        x = self.frontend(x)
+        x = self.backend(x)
+        x = self.output_layer(x)
 
-      # 출력 크기를 타겟 크기와 맞춤
-      target_size = (x.size(2) - 1, x.size(3))  # 타겟과 동일한 크기로 조정
-      x = F.interpolate(x, size=target_size, mode='bilinear', align_corners=False)
+        # interpolate 적용 부분은 그대로 유지 (필요에 따라 조정 가능)
+        target_size = (x.size(2) - 1, x.size(3))
+        x = F.interpolate(x, size=target_size, mode='bilinear', align_corners=False)
 
-      return x
+        return x
 
     def _initialize_weights(self):
-        # 초기 가중치 설정 (필요한 경우)
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 nn.init.normal_(m.weight.data, std=0.01)
@@ -58,13 +59,9 @@ class CSRNet(nn.Module):
                     m.bias.data.zero_()
 
     def _nostride_dilate(self, dilate):
-        # 레이어의 stride를 1로 설정하고 dilation을 적용하는 함수
+        # 이전에 사용하던 dilation 함수는 더 이상 필요 없음
+        # 필요 시 DenseNet의 특정 레이어에 dilation을 적용하는 별도 로직을 구현할 수 있으나
+        # 기본 DenseNet 구조로도 충분히 시도 가능
         def apply_layer(m):
-            classname = m.__class__.__name__
-            if classname.find('Conv') != -1:
-                if m.stride == (2, 2):
-                    m.stride = (1, 1)
-                    if m.kernel_size == (3, 3):
-                        m.dilation = (dilate, dilate)
-                        m.padding = (dilate, dilate)
+            pass
         return apply_layer
