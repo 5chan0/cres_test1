@@ -1,31 +1,27 @@
 import torch.nn as nn
 import torch
-from torchvision import models
 import torch.nn.functional as F
-
+# HRNet 백본을 로드하기 위한 추가 import (아래 2번에서 설명)
+from hrnet_backbone import get_hrnet_model
 
 class CSRNet(nn.Module):
     def __init__(self, load_weights=False):
         super(CSRNet, self).__init__()
         self.seen = 0
+        
+        # HRNet 백본 로드 (가중치 사전 학습 여부는 get_hrnet_model에서 처리)
+        # get_hrnet_model 함수는 HRNet을 초기화하고 pretrained 가중치를 로드한 뒤
+        # 마지막에 고해상도 피처맵을 반환하도록 구성할 예정입니다.
+        hrnet = get_hrnet_model(pretrained=not load_weights)
 
-        # 기존 ResNet-50 사용 부분 제거
-        # resnet = models.resnet50(pretrained=not load_weights)
-        # modules = list(resnet.children())[:-2]
+        # frontend: HRNet이 생성한 고해상도 특징 추출 부분
+        self.frontend = hrnet
 
-        # dilation 적용 부분 삭제 (DenseNet에는 해당 레이어 구조가 다름)
-        # resnet.layer3.apply(self._nostride_dilate(2))
-        # resnet.layer4.apply(self._nostride_dilate(4))
-
-        # DenseNet-121 사용
-        densenet = models.densenet121(pretrained=not load_weights)
-        # DenseNet의 feature 추출 파트만 사용
-        self.frontend = densenet.features
-
-        # DenseNet-121의 마지막 feature 출력 채널 수는 1024
-        # 이에 맞춰 backend 첫 Conv 레이어의 입력 채널 수정 (기존 2048 -> 1024)
+        # HRNet-W32 기준, 마지막 스테이지 출력 채널 수는 약 480ch 정도(4개 branch 32/64/128/256채널 결합 시)
+        # 이 출력을 backend 입력으로 사용
+        # backend 첫 Conv에서 stride=2를 줘서 1/4 -> 1/8 해상도로 다운샘플링
         self.backend = nn.Sequential(
-            nn.Conv2d(1024, 512, kernel_size=3, padding=2, dilation=2),
+            nn.Conv2d(480, 512, kernel_size=3, stride=2, padding=1),  # 해상도 1/2 축소 -> 1/8 달성
             nn.ReLU(inplace=True),
             nn.Conv2d(512, 256, kernel_size=3, padding=2, dilation=2),
             nn.ReLU(inplace=True),
@@ -41,14 +37,10 @@ class CSRNet(nn.Module):
             self._initialize_weights()
 
     def forward(self, x):
-        x = self.frontend(x)
+        x = self.frontend(x)  # HRNet 특징 추출
         x = self.backend(x)
         x = self.output_layer(x)
-
-        # interpolate 적용 부분은 그대로 유지 (필요에 따라 조정 가능)
-        target_size = (x.size(2) - 1, x.size(3))
-        x = F.interpolate(x, size=target_size, mode='bilinear', align_corners=False)
-
+        # HRNet + backend 구성으로 이미 1/8 해상도 출력 -> 추가적인 interpolate 불필요
         return x
 
     def _initialize_weights(self):
@@ -57,11 +49,3 @@ class CSRNet(nn.Module):
                 nn.init.normal_(m.weight.data, std=0.01)
                 if m.bias is not None:
                     m.bias.data.zero_()
-
-    def _nostride_dilate(self, dilate):
-        # 이전에 사용하던 dilation 함수는 더 이상 필요 없음
-        # 필요 시 DenseNet의 특정 레이어에 dilation을 적용하는 별도 로직을 구현할 수 있으나
-        # 기본 DenseNet 구조로도 충분히 시도 가능
-        def apply_layer(m):
-            pass
-        return apply_layer
