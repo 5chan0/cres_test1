@@ -1,27 +1,36 @@
 import torch.nn as nn
 import torch
+from torchvision import models
 import torch.nn.functional as F
-# HRNet 백본을 로드하기 위한 추가 import (아래 2번에서 설명)
-from hrnet_backbone import get_hrnet_model
 
 class CSRNet(nn.Module):
     def __init__(self, load_weights=False):
         super(CSRNet, self).__init__()
         self.seen = 0
+
+        # DeepLabv3 모델 로드 (ResNet-50 백본)
+        deeplab = models.segmentation.deeplabv3_resnet50(pretrained=not load_weights)
         
-        # HRNet 백본 로드 (가중치 사전 학습 여부는 get_hrnet_model에서 처리)
-        # get_hrnet_model 함수는 HRNet을 초기화하고 pretrained 가중치를 로드한 뒤
-        # 마지막에 고해상도 피처맵을 반환하도록 구성할 예정입니다.
-        hrnet = get_hrnet_model(pretrained=not load_weights)
+        # DeepLabv3는 backbone과 classifier로 구성
+        # backbone은 features 추출, classifier는 segmentation map 생성
+        # backbone 출력 특징 맵을 CSRNet의 backend로 연결
+        # DeepLabv3의 backbone 마지막 출력 채널 수는 2048
+        backbone = deeplab.backbone
 
-        # frontend: HRNet이 생성한 고해상도 특징 추출 부분
-        self.frontend = hrnet
+        self.frontend = nn.Sequential(
+            backbone.conv1,
+            backbone.bn1,
+            backbone.relu,
+            backbone.maxpool,
+            backbone.layer1,
+            backbone.layer2,
+            backbone.layer3,
+            backbone.layer4
+        )
 
-        # HRNet-W32 기준, 마지막 스테이지 출력 채널 수는 약 480ch 정도(4개 branch 32/64/128/256채널 결합 시)
-        # 이 출력을 backend 입력으로 사용
-        # backend 첫 Conv에서 stride=2를 줘서 1/4 -> 1/8 해상도로 다운샘플링
+        # CSRNet backend (1/8 해상도 정도에 맞춰 dilated conv 유지)
         self.backend = nn.Sequential(
-            nn.Conv2d(480, 512, kernel_size=3, stride=2, padding=1),  # 해상도 1/2 축소 -> 1/8 달성
+            nn.Conv2d(2048, 512, kernel_size=3, padding=2, dilation=2),
             nn.ReLU(inplace=True),
             nn.Conv2d(512, 256, kernel_size=3, padding=2, dilation=2),
             nn.ReLU(inplace=True),
@@ -37,10 +46,16 @@ class CSRNet(nn.Module):
             self._initialize_weights()
 
     def forward(self, x):
-        x = self.frontend(x)  # HRNet 특징 추출
+        x = self.frontend(x)
         x = self.backend(x)
         x = self.output_layer(x)
-        # HRNet + backend 구성으로 이미 1/8 해상도 출력 -> 추가적인 interpolate 불필요
+
+        # 필요 시 target 해상도 맞추기 위해 interpolate 유지
+        # 단, DeepLabv3는 이미 dilated conv를 사용해 해상도가 이전보다 보존됨
+        # 상황에 따라 이 부분을 제거하거나 조정 가능
+        #target_size = (x.size(2) - 1, x.size(3))
+        #x = F.interpolate(x, size=target_size, mode='bilinear', align_corners=False)
+
         return x
 
     def _initialize_weights(self):

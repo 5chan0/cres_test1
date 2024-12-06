@@ -45,15 +45,15 @@ def main():
     best_prec1 = 1e6
     
     args = parser.parse_args()
-    args.original_lr = 1e-7
-    args.lr = 1e-7
+    args.original_lr = 1e-5
+    args.lr = args.original_lr
     args.batch_size    = 1
     args.momentum      = 0.95
     args.decay         = 5*1e-4
     args.start_epoch   = 0
     args.epochs = 400
-    args.steps         = [-1,1,100,150]
-    args.scales        = [1,1,1,1]
+    args.steps = [100, 200]  # 100 에폭, 200 에폭에서 러닝레이트 감소
+    args.scales = [0.1, 0.1] # 지정된 에폭마다 0.1배로 줄이기
     args.workers = 4
     args.seed = time.time()
     args.print_freq = 30
