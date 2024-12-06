@@ -70,9 +70,8 @@ def main():
     model = model.cuda()
     
     criterion = nn.MSELoss(reduction='sum').cuda()  # size_average가 Python 3.10에서 지원되지 않으므로 reduction='sum'으로 대체
-    optimizer = torch.optim.SGD(model.parameters(), args.lr,
-                                momentum=args.momentum,
-                                weight_decay=args.decay)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.decay)
+
 
     if args.pre:
         if os.path.isfile(args.pre):
