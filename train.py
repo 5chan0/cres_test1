@@ -140,6 +140,7 @@ def train(train_list, model, criterion, optimizer, epoch):
         
         
         target = target.type(torch.FloatTensor).cuda()
+        target = target.unsqueeze(1)  # target: [N,1,H,W] 형태로 맞춤
 
         #target = F.interpolate(target.unsqueeze(1), size=output.size()[2:], mode='bilinear', align_corners=False)
 
