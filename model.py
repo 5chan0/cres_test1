@@ -8,15 +8,11 @@ class CSRNet(nn.Module):
         super(CSRNet, self).__init__()
         self.seen = 0
         
-        # EfficientNet B5 모델 로드
-        # pretrained 인자를 통해 가중치 로드 여부를 결정
-        effnet = models.efficientnet_b5(pretrained=not load_weights)
+        # ConvNeXt X-Large 모델 로드 (최신 torchvision에서 지원)
+        convnext = models.convnext_xlarge(pretrained=not load_weights)
+        self.frontend = convnext.features
 
-        # EfficientNet의 features 부분을 frontend로 사용
-        self.frontend = effnet.features
-
-        # EfficientNet B5의 마지막 features 출력 채널 수가 2048이라 가정 (torchvision 공식 구현 참고)
-        # 기존 backend 유지
+        # ConvNeXt X-Large의 마지막 feature 출력 채널 수는 2048
         self.backend = nn.Sequential(
             nn.Conv2d(2048, 512, kernel_size=3, padding=2, dilation=2),
             nn.ReLU(inplace=True),
@@ -34,9 +30,16 @@ class CSRNet(nn.Module):
             self._initialize_weights()
 
     def forward(self, x):
+        # ConvNeXt features 추출 (1/32 scale)
         x = self.frontend(x)
+        
+        # 1/32 -> 1/8로 업샘플 (scale_factor=4)
+        x = F.interpolate(x, scale_factor=4, mode='bilinear', align_corners=False)
+        
+        # backend 처리 (해상도 유지)
         x = self.backend(x)
         x = self.output_layer(x)
+
         return x
 
     def _initialize_weights(self):
