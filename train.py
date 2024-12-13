@@ -19,8 +19,7 @@ import cv2
 import dataset
 import time
 
-import torch.nn.functional as F  # 파일 상단에 추가
-
+import torch.nn.functional as F
 
 parser = argparse.ArgumentParser(description='PyTorch CSRNet')
 
@@ -39,7 +38,6 @@ parser.add_argument('task',metavar='TASK', type=str,
                     help='task id to use.')
 
 def main():
-    
     global args,best_prec1
     
     best_prec1 = 1e6
@@ -52,8 +50,8 @@ def main():
     args.decay         = 5*1e-4
     args.start_epoch   = 0
     args.epochs = 400
-    args.steps = [100, 200]  # 100 에폭, 200 에폭에서 러닝레이트 감소
-    args.scales = [0.1, 0.1] # 지정된 에폭마다 0.1배로 줄이기
+    args.steps = [100, 200] 
+    args.scales = [0.1, 0.1] 
     args.workers = 4
     args.seed = time.time()
     args.print_freq = 30
@@ -63,15 +61,14 @@ def main():
         val_list = json.load(outfile)
     
     os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
-    torch.cuda.manual_seed(args.seed)
+    torch.cuda.manual_seed(int(args.seed))
     
     model = CSRNet()
     
     model = model.cuda()
     
-    criterion = nn.MSELoss(reduction='sum').cuda()  # size_average가 Python 3.10에서 지원되지 않으므로 reduction='sum'으로 대체
+    criterion = nn.MSELoss(reduction='sum').cuda()
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.decay)
-
 
     if args.pre:
         if os.path.isfile(args.pre):
@@ -86,15 +83,23 @@ def main():
         else:
             print("=> no checkpoint found at '{}'".format(args.pre))
             
+    # mae 기록용 파일 초기화 (기존 내용 덮어쓰기)
+    with open('mae_log.txt', 'w') as f:
+        f.write("epoch,mae\n")
+
     for epoch in range(args.start_epoch, args.epochs):
         
         adjust_learning_rate(optimizer, epoch)
         
         train(train_list, model, criterion, optimizer, epoch)
-        prec1 = validate(val_list, model, criterion)
+        mae = validate(val_list, model, criterion)
         
-        is_best = prec1 < best_prec1
-        best_prec1 = min(prec1, best_prec1)
+        # mae 값을 로그 파일에 기록
+        with open('mae_log.txt', 'a') as f:
+            f.write(f"{epoch},{mae.item():.4f}\n")
+        
+        is_best = mae < best_prec1
+        best_prec1 = min(mae, best_prec1)
         print(' * best MAE {mae:.3f} '
               .format(mae=best_prec1))
         save_checkpoint({
@@ -110,7 +115,6 @@ def train(train_list, model, criterion, optimizer, epoch):
     losses = AverageMeter()
     batch_time = AverageMeter()
     data_time = AverageMeter()
-    
     
     train_loader = torch.utils.data.DataLoader(
         dataset.listDataset(train_list,
@@ -129,26 +133,18 @@ def train(train_list, model, criterion, optimizer, epoch):
     model.train()
     end = time.time()
     
-    for i,(img, target)in enumerate(train_loader):
+    for i,(img, target) in enumerate(train_loader):
         data_time.update(time.time() - end)
         
         img = img.cuda()
         img = Variable(img)
         output = model(img)
-        
-        
-        
-        
+
         target = target.type(torch.FloatTensor).cuda()
-        target = target.unsqueeze(1)  # target: [N,1,H,W] 형태로 맞춤
-
-        #target = F.interpolate(target.unsqueeze(1), size=output.size()[2:], mode='bilinear', align_corners=False)
-
-        
+        target = target.unsqueeze(1)  # target: [N,1,H,W]
         
         loss = criterion(output, target)
 
-        
         losses.update(loss.item(), img.size(0))
         optimizer.zero_grad()
         loss.backward()
@@ -195,16 +191,9 @@ def validate(val_list, model, criterion):
     return mae    
         
 def adjust_learning_rate(optimizer, epoch):
-    """Sets the learning rate to the initial LR decayed by 10 every 30 epochs"""
-    
-    
     args.lr = args.original_lr
-    
     for i in range(len(args.steps)):
-        
         scale = args.scales[i] if i < len(args.scales) else 1
-        
-        
         if epoch >= args.steps[i]:
             args.lr = args.lr * scale
             if epoch == args.steps[i]:
