@@ -8,13 +8,13 @@ class CSRNet(nn.Module):
         super(CSRNet, self).__init__()
         self.seen = 0
         
-        # ConvNeXt X-Large 모델 로드 (최신 torchvision에서 지원)
-        convnext = models.convnext_xlarge(pretrained=not load_weights)
+        # convnext_large 사용 (pretrained=True 권장, load_weights=False이면 pretrained=True)
+        convnext = models.convnext_large(pretrained=not load_weights)
         self.frontend = convnext.features
 
-        # ConvNeXt X-Large의 마지막 feature 출력 채널 수는 2048
+        # convnext_large의 마지막 features 출력 채널 수: 1536
         self.backend = nn.Sequential(
-            nn.Conv2d(2048, 512, kernel_size=3, padding=2, dilation=2),
+            nn.Conv2d(1536, 512, kernel_size=3, padding=2, dilation=2),
             nn.ReLU(inplace=True),
             nn.Conv2d(512, 256, kernel_size=3, padding=2, dilation=2),
             nn.ReLU(inplace=True),
@@ -30,16 +30,12 @@ class CSRNet(nn.Module):
             self._initialize_weights()
 
     def forward(self, x):
-        # ConvNeXt features 추출 (1/32 scale)
+        # ConvNeXt Large의 출력: 입력 대비 1/32 크기
         x = self.frontend(x)
-        
-        # 1/32 -> 1/8로 업샘플 (scale_factor=4)
+        # 1/32 -> 1/8로 업샘플
         x = F.interpolate(x, scale_factor=4, mode='bilinear', align_corners=False)
-        
-        # backend 처리 (해상도 유지)
         x = self.backend(x)
         x = self.output_layer(x)
-
         return x
 
     def _initialize_weights(self):
