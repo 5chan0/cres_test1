@@ -141,7 +141,7 @@ def train(train_list, model, criterion, optimizer, epoch):
         
         target = target.type(torch.FloatTensor).cuda()
 
-        target = F.interpolate(target.unsqueeze(1), size=output.size()[2:], mode='bilinear', align_corners=False)
+        #target = F.interpolate(target.unsqueeze(1), size=output.size()[2:], mode='bilinear', align_corners=False)
 
         
         
