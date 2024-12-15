@@ -24,21 +24,23 @@ def main():
     os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    # 모델 초기화 및 로드
+    # 모델 초기화
     model = CSRNet()
     model = model.to(device)
-    
+
+    # 모델 파일 존재 여부 확인
     if not os.path.isfile(args.model):
         print(f"Error: Model file '{args.model}' not found.")
         return
 
+    # 모델 로드
     try:
         checkpoint = torch.load(args.model, map_location=device)
         if isinstance(checkpoint, dict) and 'state_dict' in checkpoint:
             model.load_state_dict(checkpoint['state_dict'])
             print(f"Loaded checkpoint from '{args.model}' (epoch {checkpoint.get('epoch', 'N/A')})")
         else:
-            # checkpoint가 dict가 아니거나 'state_dict' 키가 없는 경우, 전체를 state_dict로 간주
+            # checkpoint가 dict가 아니거나 'state_dict' 키가 없는 경우, 전체을 state_dict로 간주
             model.load_state_dict(checkpoint)
             print(f"Loaded state_dict from '{args.model}'")
     except Exception as e:
@@ -54,19 +56,18 @@ def main():
         print(f"No images found in directory '{args.data_dir}'.")
         return
 
-    mae_total = 0
-    mae_list = []
-    for i, img_path in enumerate(img_paths):
+    mae = 0
+    for i in range(len(img_paths)):  # Python 3에서는 range, Python 2에서는 xrange 사용
+        img_path = img_paths[i]
+
         # 이미지 및 Ground Truth 로드
         img, groundtruth = load_data(img_path, train=False)
 
         # 이미지 전처리
-        img = F.to_tensor(img).unsqueeze(0).to(device)  # 배치 차원 추가
-        img = img * 255.0  # 원본 코드와 동일하게 스케일링
+        img = 255.0 * F.to_tensor(img).unsqueeze(0).to(device)  # 배치 차원 추가 및 스케일링
         img[0, 0, :, :] -= 92.8207477031
         img[0, 1, :, :] -= 95.2757037428
         img[0, 2, :, :] -= 104.877445883
-        # 원본 코드의 주석 처리된 transform 사용 대신 직접 전처리
 
         # Forward Pass
         with torch.no_grad():
@@ -77,15 +78,14 @@ def main():
         gt_count = np.sum(groundtruth)
 
         # MAE 계산
-        mae = abs(output_sum - gt_count)
-        mae_list.append(mae)
-        mae_total += mae
+        mae += abs(output_sum - gt_count)
 
-        print(f'Image {i+1}/{len(img_paths)} - MAE: {mae:.4f}')
+        # 현재 MAE 출력 (원본 val.py와 동일한 형식)
+        print(f"{i}, {mae}")
 
-    # 최종 평균 MAE 계산 및 출력
-    final_mae = mae_total / len(img_paths)
-    print(f'\nFinal Average MAE: {final_mae:.4f}')
+    # 최종 MAE 계산 및 출력
+    final_mae = mae / len(img_paths)
+    print(f"{final_mae}")
 
 if __name__ == '__main__':
     main()
