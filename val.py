@@ -38,7 +38,7 @@ def main():
             model.load_state_dict(checkpoint['state_dict'])
             print(f"Loaded checkpoint from '{args.model}' (epoch {checkpoint.get('epoch', 'N/A')})")
         else:
-            # checkpoint가 dict가 아니거나 'state_dict' 키가 없는 경우, 전체을 state_dict로 간주
+            # checkpoint가 dict가 아니거나 'state_dict' 키가 없는 경우, 전체를 state_dict로 간주
             model.load_state_dict(checkpoint)
             print(f"Loaded state_dict from '{args.model}'")
     except Exception as e:
@@ -54,7 +54,8 @@ def main():
         print(f"No images found in directory '{args.data_dir}'.")
         return
 
-    mae = 0
+    mae_total = 0
+    mae_list = []
     for i, img_path in enumerate(img_paths):
         # 이미지 및 Ground Truth 로드
         img, groundtruth = load_data(img_path, train=False)
@@ -76,12 +77,15 @@ def main():
         gt_count = np.sum(groundtruth)
 
         # MAE 계산
-        mae += abs(output_sum - gt_count)
-        print(f'Image {i+1}/{len(img_paths)} - Current MAE: {mae/(i+1):.4f}')
+        mae = abs(output_sum - gt_count)
+        mae_list.append(mae)
+        mae_total += mae
 
-    # 최종 MAE 출력
-    final_mae = mae / len(img_paths)
-    print(f'\nFinal MAE: {final_mae:.4f}')
+        print(f'Image {i+1}/{len(img_paths)} - MAE: {mae:.4f}')
+
+    # 최종 평균 MAE 계산 및 출력
+    final_mae = mae_total / len(img_paths)
+    print(f'\nFinal Average MAE: {final_mae:.4f}')
 
 if __name__ == '__main__':
     main()
