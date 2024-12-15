@@ -24,16 +24,27 @@ def main():
     os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    # 모델 로드
+    # 모델 초기화 및 로드
     model = CSRNet()
     model = model.to(device)
     
     if not os.path.isfile(args.model):
-        print(f"Model file '{args.model}' not found.")
+        print(f"Error: Model file '{args.model}' not found.")
         return
 
-    checkpoint = torch.load(args.model, map_location=device)
-    model.load_state_dict(checkpoint['state_dict'])
+    try:
+        checkpoint = torch.load(args.model, map_location=device)
+        if isinstance(checkpoint, dict) and 'state_dict' in checkpoint:
+            model.load_state_dict(checkpoint['state_dict'])
+            print(f"Loaded checkpoint from '{args.model}' (epoch {checkpoint.get('epoch', 'N/A')})")
+        else:
+            # checkpoint가 dict가 아니거나 'state_dict' 키가 없는 경우, 전체을 state_dict로 간주
+            model.load_state_dict(checkpoint)
+            print(f"Loaded state_dict from '{args.model}'")
+    except Exception as e:
+        print(f"Error loading the model file: {e}")
+        return
+
     model.eval()
 
     # 검증 데이터 경로 수집
@@ -60,10 +71,10 @@ def main():
         with torch.no_grad():
             output = model(img)
             output_sum = output.detach().cpu().sum().item()
-        
+
         # Ground Truth 카운트 계산
         gt_count = np.sum(groundtruth)
-        
+
         # MAE 계산
         mae += abs(output_sum - gt_count)
         print(f'Image {i+1}/{len(img_paths)} - Current MAE: {mae/(i+1):.4f}')
