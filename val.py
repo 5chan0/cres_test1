@@ -7,10 +7,8 @@ import glob
 from model import CSRNet
 import torch
 import torchvision.transforms.functional as F
-from image import load_data  # load_data 함수가 image.py에 정의되어 있다고 가정
 
-def main():
-    # Argument parser 설정
+def parse_args():
     parser = argparse.ArgumentParser(description='Validate CSRNet model')
     parser.add_argument('--model', '-m', type=str, required=True,
                         help='Path to the model .pth.tar file')
@@ -18,74 +16,99 @@ def main():
                         help='Path to the validation images directory')
     parser.add_argument('--gpu', '-g', type=str, default='0',
                         help='GPU id to use. Default is 0')
-    args = parser.parse_args()
+    return parser.parse_args()
 
-    # GPU 설정
-    os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-    # 모델 초기화
+def load_model(model_path, device):
     model = CSRNet()
     model = model.to(device)
-
-    # 모델 파일 존재 여부 확인
-    if not os.path.isfile(args.model):
-        print(f"Error: Model file '{args.model}' not found.")
-        return
-
-    # 모델 로드
+    
+    if not os.path.isfile(model_path):
+        raise FileNotFoundError(f"Model file '{model_path}' not found.")
+    
     try:
-        checkpoint = torch.load(args.model, map_location=device)
+        checkpoint = torch.load(model_path, map_location=device)
         if isinstance(checkpoint, dict) and 'state_dict' in checkpoint:
             model.load_state_dict(checkpoint['state_dict'])
-            print(f"Loaded checkpoint from '{args.model}' (epoch {checkpoint.get('epoch', 'N/A')})")
+            print(f"Loaded checkpoint from '{model_path}' (epoch {checkpoint.get('epoch', 'N/A')})")
         else:
-            # checkpoint가 dict가 아니거나 'state_dict' 키가 없는 경우, 전체을 state_dict로 간주
+            # Assume the entire file is the state_dict
             model.load_state_dict(checkpoint)
-            print(f"Loaded state_dict from '{args.model}'")
+            print(f"Loaded state_dict from '{model_path}'")
     except Exception as e:
-        print(f"Error loading the model file: {e}")
-        return
-
+        raise RuntimeError(f"Error loading the model file: {e}")
+    
     model.eval()
+    return model
 
-    # 검증 데이터 경로 수집
-    img_paths = glob.glob(os.path.join(args.data_dir, '*.jpg'))
-
+def get_image_paths(data_dir):
+    img_paths = glob.glob(os.path.join(data_dir, '*.jpg'))
     if not img_paths:
-        print(f"No images found in directory '{args.data_dir}'.")
-        return
+        raise FileNotFoundError(f"No images found in directory '{data_dir}'.")
+    return img_paths
 
-    mae = 0
-    for i in range(len(img_paths)):  # Python 3에서는 range, Python 2에서는 xrange 사용
-        img_path = img_paths[i]
-
-        # 이미지 및 Ground Truth 로드
-        img, groundtruth = load_data(img_path, train=False)
-
-        # 이미지 전처리
-        img = 255.0 * F.to_tensor(img).unsqueeze(0).to(device)  # 배치 차원 추가 및 스케일링
-        img[0, 0, :, :] -= 92.8207477031
-        img[0, 1, :, :] -= 95.2757037428
-        img[0, 2, :, :] -= 104.877445883
-
-        # Forward Pass
+def validate(model, device, img_paths):
+    mae = 0.0
+    for i, img_path in enumerate(img_paths):
+        # Load image and ground truth
+        img = 255.0 * F.to_tensor(Image.open(img_path).convert('RGB'))
+        
+        # Subtract mean values (as per original code)
+        img[0, :, :] -= 92.8207477031
+        img[1, :, :] -= 95.2757037428
+        img[2, :, :] -= 104.877445883
+        
+        img = img.to(device)
+        
+        # Load ground truth density map
+        gt_path = img_path.replace('.jpg', '.h5').replace('images', 'ground_truth')
+        if not os.path.isfile(gt_path):
+            print(f"Warning: Ground truth file '{gt_path}' not found. Skipping this image.")
+            continue
+        gt_file = h5py.File(gt_path, 'r')
+        groundtruth = np.asarray(gt_file['density'])
+        gt_file.close()
+        
+        # Forward pass
         with torch.no_grad():
-            output = model(img)
+            output = model(img.unsqueeze(0))
             output_sum = output.detach().cpu().sum().item()
-
-        # Ground Truth 카운트 계산
+        
         gt_count = np.sum(groundtruth)
-
-        # MAE 계산
+        
+        # Calculate MAE
         mae += abs(output_sum - gt_count)
-
-        # 현재 MAE 출력 (원본 val.py와 동일한 형식)
-        print(f"{i}, {mae}")
-
-    # 최종 MAE 계산 및 출력
+        print(f'Image {i+1}/{len(img_paths)} - Current MAE: {mae/(i+1):.4f}')
+    
     final_mae = mae / len(img_paths)
-    print(f"{final_mae}")
+    print(f'\nFinal MAE: {final_mae:.4f}')
+
+def main():
+    args = parse_args()
+    
+    # Set GPU
+    os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    if device.type == 'cuda':
+        print(f"Using GPU: {args.gpu}")
+    else:
+        print("GPU not available. Using CPU.")
+    
+    # Load model
+    try:
+        model = load_model(args.model, device)
+    except Exception as e:
+        print(e)
+        return
+    
+    # Get image paths
+    try:
+        img_paths = get_image_paths(args.data_dir)
+    except Exception as e:
+        print(e)
+        return
+    
+    # Validate
+    validate(model, device, img_paths)
 
 if __name__ == '__main__':
     main()
